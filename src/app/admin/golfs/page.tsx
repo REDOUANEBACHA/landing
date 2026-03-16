@@ -18,7 +18,7 @@ import {
 
 const HoleMap = dynamic(() => import("@/components/HoleMap"), { ssr: false });
 
-const API = "http://localhost:3001/api";
+const API = process.env.NEXT_PUBLIC_API_URL!;
 
 /* ---- Types ---- */
 interface CourseHole {

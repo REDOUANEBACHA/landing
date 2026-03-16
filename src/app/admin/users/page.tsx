@@ -10,7 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 
-const API = "http://localhost:3001/api";
+const API = process.env.NEXT_PUBLIC_API_URL!;
 
 interface User {
   id: string;
