@@ -22,6 +22,7 @@ const sidebarItems = [
   { icon: <BarChart3 className="w-4.5 h-4.5" />, label: "Dashboard", href: "/admin" },
   { icon: <MapPin className="w-4.5 h-4.5" />, label: "Golfs", href: "/admin/golfs" },
   { icon: <Users className="w-4.5 h-4.5" />, label: "Utilisateurs", href: "/admin/users" },
+  { icon: <Bell className="w-4.5 h-4.5" />, label: "Notifications", href: "/admin/notifications" },
   { icon: <Trophy className="w-4.5 h-4.5" />, label: "Concours", href: "/admin/contests" },
   { icon: <Medal className="w-4.5 h-4.5" />, label: "Modules", href: "/admin/modules" },
   { icon: <CreditCard className="w-4.5 h-4.5" />, label: "Abonnements", href: "/admin/subscriptions" },
