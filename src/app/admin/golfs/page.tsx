@@ -80,13 +80,15 @@ function CourseModal({
 
   const buildInitialHoles = () => {
     if (course?.courseHoles && course.courseHoles.length > 0) {
-      return course.courseHoles.map((h) => ({
+      return course.courseHoles.map((h: any) => ({
         number: h.number, par: h.par, distance: h.distance,
         latitude: h.latitude ?? null, longitude: h.longitude ?? null,
+        greenPoints: h.greenPoints ?? null,
       }));
     }
     return Array.from({ length: initialHolesCount }, (_, i) => ({
       number: i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null,
+      greenPoints: null as { lat: number; lng: number }[] | null,
     }));
   };
   const [courseHoles, setCourseHoles] = useState(buildInitialHoles);
@@ -194,6 +196,18 @@ function CourseModal({
         .then((res) => res.ok ? res.json() : null)
         .then((data) => {
           if (data?.zones) setCourseZones(data.zones.map((z: any) => ({ type: z.type, points: z.points })));
+          if (data?.holes && data.holes.length > 0) {
+            setCourseHoles((prev) => {
+              const updated = [...prev];
+              for (const dh of data.holes) {
+                const idx = dh.number - 1;
+                if (idx >= 0 && idx < updated.length) {
+                  updated[idx] = { ...updated[idx], latitude: dh.latitude, longitude: dh.longitude, par: dh.par || updated[idx].par, greenPoints: dh.greenPoints || updated[idx].greenPoints };
+                }
+              }
+              return recalcDistances(updated);
+            });
+          }
         })
         .catch(() => {});
     }
@@ -233,6 +247,7 @@ function CourseModal({
         courseHoles: courseHoles.map((h) => ({
           number: h.number, par: h.par, distance: h.distance,
           ...(h.latitude != null && h.longitude != null ? { latitude: h.latitude, longitude: h.longitude } : {}),
+          ...(h.greenPoints ? { greenPoints: h.greenPoints } : {}),
         })),
       };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -367,7 +382,7 @@ function CourseModal({
                   <span className="text-[10px] text-gray-600 font-medium uppercase">Dist.</span>
                   <span className="text-[10px] text-gray-600 font-medium uppercase">GPS</span>
                 </div>
-                <div className="max-h-[310px] overflow-y-auto">
+                <div className="max-h-[500px] overflow-y-auto overscroll-contain relative z-10">
                   {courseHoles.map((hole, i) => (
                     <button type="button" key={i} onClick={() => setActiveHoleIndex(i)} className={`w-full grid grid-cols-[40px_1fr_1fr_20px] gap-1.5 px-3 py-1.5 border-b border-white/[0.02] last:border-0 items-center transition-colors ${activeHoleIndex === i ? "bg-accent/10" : "hover:bg-white/[0.02]"}`}>
                       <span className={`text-[12px] font-bold text-center ${activeHoleIndex === i ? "text-accent" : "text-gray-400"}`}>{hole.number}</span>
@@ -388,7 +403,35 @@ function CourseModal({
                   <p className="text-[10px] text-gray-600">{courseHoles.filter((h) => h.latitude != null).length}/{courseHoles.length} places</p>
                 </div>
                 {form.latitude !== 0 && form.longitude !== 0 ? (
-                  <HoleMap center={[form.latitude, form.longitude]} holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude }))} activeHole={activeHoleIndex} onHolePositioned={handleHolePositioned} onSave={doSave} saving={saving} zones={courseZones} onZonesChange={setCourseZones} courseId={isEdit ? course.id : undefined} />
+                  <HoleMap
+                    center={[form.latitude, form.longitude]}
+                    holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude, greenPoints: h.greenPoints }))}
+                    activeHole={activeHoleIndex}
+                    onHolePositioned={handleHolePositioned}
+                    onSave={doSave}
+                    saving={saving}
+                    zones={courseZones}
+                    onZonesChange={setCourseZones}
+                    courseId={isEdit ? course.id : undefined}
+                    onHolesDetected={(detectedHoles) => {
+                      setCourseHoles((prev) => {
+                        const updated = [...prev];
+                        for (const dh of detectedHoles) {
+                          const idx = dh.number - 1;
+                          if (idx >= 0 && idx < updated.length) {
+                            updated[idx] = {
+                              ...updated[idx],
+                              latitude: dh.latitude,
+                              longitude: dh.longitude,
+                              par: dh.par || updated[idx].par,
+                              greenPoints: dh.greenPoints || updated[idx].greenPoints,
+                            };
+                          }
+                        }
+                        return recalcDistances(updated);
+                      });
+                    }}
+                  />
                 ) : (
                   <div className="w-full rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center justify-center" style={{ height: 350 }}>
                     <p className="text-[13px] text-gray-600 text-center px-4">Recherchez une adresse pour afficher la carte</p>

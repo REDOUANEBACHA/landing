@@ -16,6 +16,7 @@ interface HolePosition {
   number: number;
   latitude: number | null;
   longitude: number | null;
+  greenPoints?: { lat: number; lng: number }[] | null;
 }
 
 interface ZonePoint { lat: number; lng: number; }
@@ -38,6 +39,7 @@ interface HoleMapProps {
   zones?: ZoneData[];
   onZonesChange?: (zones: ZoneData[]) => void;
   courseId?: string;
+  onHolesDetected?: (holes: { number: number; latitude: number; longitude: number; par: number | null; greenPoints: ZonePoint[] | null }[]) => void;
 }
 
 // Color per hole for markers
@@ -84,7 +86,7 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
 
 const API = process.env.NEXT_PUBLIC_API_URL!;
 
-export default function HoleMap({ center, holes, activeHole, onHolePositioned, onSave, saving, zones = [], onZonesChange, courseId }: HoleMapProps) {
+export default function HoleMap({ center, holes, activeHole, onHolePositioned, onSave, saving, zones = [], onZonesChange, courseId, onHolesDetected }: HoleMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
@@ -119,7 +121,12 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
         center,
         zoom: 19,
         zoomControl: true,
+        scrollWheelZoom: false,
       });
+
+      // Enable scroll zoom only when mouse is over the map
+      container.addEventListener("mouseenter", () => map.scrollWheelZoom.enable());
+      container.addEventListener("mouseleave", () => map.scrollWheelZoom.disable());
 
       L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
         attribution: "Esri",
@@ -283,6 +290,19 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
         linesRef.current!.addLayer(label);
       }
     }
+
+    // Draw green polygons
+    positioned.forEach((hole) => {
+      if (!hole.greenPoints || hole.greenPoints.length < 3) return;
+      const latlngs = hole.greenPoints.map((p) => [p.lat, p.lng] as [number, number]);
+      L.polygon(latlngs, {
+        color: "#44DD44",
+        weight: 1.5,
+        opacity: 0.6,
+        fillColor: "#44DD44",
+        fillOpacity: 0.12,
+      }).addTo(linesRef.current!);
+    });
   }, [holes, activeHole, onHolePositioned]);
 
   // Draw golf boundary
@@ -385,6 +405,9 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
       if (data.zones && data.zones.length > 0) {
         onZonesChange([...zones, ...data.zones.map((z: any) => ({ type: z.type, points: z.points }))]);
       }
+      if (data.holes && data.holes.length > 0 && onHolesDetected) {
+        onHolesDetected(data.holes);
+      }
     } catch (e) {
       console.error("Auto-detect error:", e);
     } finally {
@@ -453,7 +476,7 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
         />
         {/* Mode toggle + zone controls */}
         {onZonesChange && (
-          <div className="absolute top-2.5 left-2.5 z-[10000] flex flex-col gap-2">
+          <div className="absolute top-2.5 left-2.5 z-[10000] flex flex-col gap-2 max-h-[calc(100%-20px)] overflow-y-auto overscroll-contain rounded-xl" style={{ scrollbarWidth: "thin" }}>
             {/* Mode toggle */}
             <div className="flex gap-1 p-1 rounded-xl bg-dark/80 backdrop-blur-sm border border-white/10">
               <button type="button" onClick={() => { setMode("holes"); setZoneDraft([]); }}
