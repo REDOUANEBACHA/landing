@@ -16,6 +16,8 @@ interface HolePosition {
   number: number;
   latitude: number | null;
   longitude: number | null;
+  teeLat?: number | null;
+  teeLng?: number | null;
   greenPoints?: { lat: number; lng: number }[] | null;
 }
 
@@ -34,11 +36,15 @@ interface HoleMapProps {
   holes: HolePosition[];
   activeHole: number;
   onHolePositioned: (holeIndex: number, lat: number, lng: number) => void;
+  onTeePositioned?: (holeIndex: number, lat: number, lng: number) => void;
+  onActiveHoleChange?: (holeIndex: number) => void;
   onSave?: () => void;
   saving?: boolean;
   zones?: ZoneData[];
   onZonesChange?: (zones: ZoneData[]) => void;
   courseId?: string;
+  holeTool?: "green" | "tee";
+  onHoleToolChange?: (tool: "green" | "tee") => void;
   onHolesDetected?: (holes: { number: number; latitude: number; longitude: number; par: number | null; greenPoints: ZonePoint[] | null }[]) => void;
 }
 
@@ -74,19 +80,10 @@ function getHoleIcon(number: number, isActive: boolean) {
   });
 }
 
-// Haversine distance in meters
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-}
 
 const API = process.env.NEXT_PUBLIC_API_URL!;
 
-export default function HoleMap({ center, holes, activeHole, onHolePositioned, onSave, saving, zones = [], onZonesChange, courseId, onHolesDetected }: HoleMapProps) {
+export default function HoleMap({ center, holes, activeHole, onHolePositioned, onTeePositioned, onActiveHoleChange, onSave, saving, zones = [], onZonesChange, courseId, holeTool: holeToolProp, onHoleToolChange, onHolesDetected }: HoleMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
@@ -94,6 +91,9 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
   const zonesLayerRef = useRef<L.LayerGroup | null>(null);
   const draftLayerRef = useRef<L.LayerGroup | null>(null);
   const [mode, setMode] = useState<"holes" | "zones">("holes");
+  const [holeAction, setHoleAction] = useState<"place" | "move">("move");
+  const holeTool = holeToolProp || "green";
+  const setHoleTool = onHoleToolChange || (() => {});
   const [zoneTool, setZoneTool] = useState<"draw" | "pan">("pan");
   const [activeZoneType, setActiveZoneType] = useState("ob");
   const [zoneDraft, setZoneDraft] = useState<ZonePoint[]>([]);
@@ -101,6 +101,7 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
   const drawingRef = useRef(false);
   const boundaryLayerRef = useRef<L.LayerGroup | null>(null);
   const [golfBoundary, setGolfBoundary] = useState<ZonePoint[] | null>(null);
+  const markerClickedRef = useRef(false);
 
   // Initialize map
   useEffect(() => {
@@ -159,8 +160,16 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
     if (!map) return;
 
     const handleClick = (e: L.LeafletMouseEvent) => {
-      if (mode === "holes") {
-        onHolePositioned(activeHole, e.latlng.lat, e.latlng.lng);
+      if (markerClickedRef.current) {
+        markerClickedRef.current = false;
+        return;
+      }
+      if (mode === "holes" && holeAction === "place") {
+        if (holeTool === "tee" && onTeePositioned) {
+          onTeePositioned(activeHole, e.latlng.lat, e.latlng.lng);
+        } else {
+          onHolePositioned(activeHole, e.latlng.lat, e.latlng.lng);
+        }
       }
     };
 
@@ -199,109 +208,109 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
       map.off("mouseup", handleMouseUp);
       map.dragging.enable();
     };
-  }, [activeHole, onHolePositioned, mode, zoneTool]);
+  }, [activeHole, onHolePositioned, onTeePositioned, mode, holeTool, holeAction, zoneTool]);
 
   // Update markers + lines
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Remove old markers
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current.clear();
+    const positioned = holes.filter((h) => h.latitude != null && h.longitude != null);
 
-    // Remove old lines - recreate layer group if needed
-    if (linesRef.current) {
-      try {
-        linesRef.current.clearLayers();
-        if (!map.hasLayer(linesRef.current)) {
-          linesRef.current.addTo(map);
-        }
-      } catch {
-        linesRef.current = L.layerGroup().addTo(map);
+    // Update existing markers or create new ones (avoid full recreate on drag)
+    const existingNums = new Set(markersRef.current.keys());
+    const neededNums = new Set(positioned.map((h) => h.number));
+
+    // Remove markers no longer needed
+    existingNums.forEach((num) => {
+      if (!neededNums.has(num)) {
+        markersRef.current.get(num)?.remove();
+        markersRef.current.delete(num);
       }
+    });
+
+    // Update or create markers
+    positioned.forEach((hole) => {
+      const existing = markersRef.current.get(hole.number);
+      if (existing) {
+        // Just update position + icon (don't recreate)
+        const pos = existing.getLatLng();
+        if (Math.abs(pos.lat - hole.latitude!) > 0.0000001 || Math.abs(pos.lng - hole.longitude!) > 0.0000001) {
+          existing.setLatLng([hole.latitude!, hole.longitude!]);
+        }
+        existing.setIcon(getHoleIcon(hole.number, hole.number === activeHole + 1));
+      } else {
+        // New marker
+        const marker = L.marker([hole.latitude!, hole.longitude!], {
+          icon: getHoleIcon(hole.number, hole.number === activeHole + 1),
+          draggable: true,
+        }).addTo(map);
+        marker.on("dragstart", () => { markerClickedRef.current = true; });
+        marker.on("dragend", () => {
+          markerClickedRef.current = true;
+          const pos = marker.getLatLng();
+          onHolePositioned(hole.number - 1, pos.lat, pos.lng);
+        });
+        marker.on("click", () => {
+          markerClickedRef.current = true;
+          if (onActiveHoleChange) onActiveHoleChange(hole.number - 1);
+        });
+        marker.bindTooltip(`Trou ${hole.number}`, { direction: "top", offset: [0, -14] });
+        markersRef.current.set(hole.number, marker);
+      }
+    });
+
+    // Recreate lines layer (tee-to-green lines, greens, tees)
+    if (linesRef.current) {
+      try { linesRef.current.clearLayers(); } catch { linesRef.current = L.layerGroup().addTo(map); }
     } else {
       linesRef.current = L.layerGroup().addTo(map);
     }
 
-    const positioned = holes.filter((h) => h.latitude != null && h.longitude != null);
-
-    // Add markers
     positioned.forEach((hole) => {
-      const marker = L.marker([hole.latitude!, hole.longitude!], {
-        icon: getHoleIcon(hole.number, hole.number === activeHole + 1),
-        draggable: true,
-      }).addTo(map);
-
-      marker.on("dragend", () => {
-        const pos = marker.getLatLng();
-        onHolePositioned(hole.number - 1, pos.lat, pos.lng);
-      });
-
-      marker.bindTooltip(`Trou ${hole.number}`, { direction: "top", offset: [0, -14] });
-      markersRef.current.set(hole.number, marker);
-    });
-
-    // Draw lines between ALL positioned holes (in order) + distance labels
-    if (positioned.length >= 2) {
-      for (let i = 0; i < positioned.length - 1; i++) {
-        const a = positioned[i];
-        const b = positioned[i + 1];
-        const color = HOLE_COLORS[(a.number - 1) % HOLE_COLORS.length];
-        const posA: [number, number] = [a.latitude!, a.longitude!];
-        const posB: [number, number] = [b.latitude!, b.longitude!];
-
-        // Polyline
-        const line = L.polyline([posA, posB], {
-          color,
-          weight: 3,
-          opacity: 0.8,
-          dashArray: "8, 6",
-        });
-        linesRef.current!.addLayer(line);
-
-        // Distance label at midpoint
-        const dist = haversine(a.latitude!, a.longitude!, b.latitude!, b.longitude!);
-        const midLat = (a.latitude! + b.latitude!) / 2;
-        const midLng = (a.longitude! + b.longitude!) / 2;
-
-        const label = L.marker([midLat, midLng], {
-          icon: L.divIcon({
-            className: "",
-            iconSize: [64, 24],
-            iconAnchor: [32, 12],
-            html: `<div style="
-              background: rgba(0,0,0,0.8);
-              backdrop-filter: blur(4px);
-              border: 1px solid ${color}60;
-              border-radius: 6px;
-              padding: 2px 8px;
-              font-size: 11px;
-              font-weight: 700;
-              color: ${color};
-              text-align: center;
-              white-space: nowrap;
-              pointer-events: none;
-              box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-            ">${dist}m</div>`,
-          }),
-          interactive: false,
-        });
-        linesRef.current!.addLayer(label);
+      // Green polygon
+      if (hole.greenPoints && hole.greenPoints.length >= 3) {
+        const latlngs = hole.greenPoints.map((p) => [p.lat, p.lng] as [number, number]);
+        L.polygon(latlngs, {
+          color: "#44DD44", weight: 1.5, opacity: 0.6, fillColor: "#44DD44", fillOpacity: 0.12,
+        }).addTo(linesRef.current!);
       }
-    }
 
-    // Draw green polygons
-    positioned.forEach((hole) => {
-      if (!hole.greenPoints || hole.greenPoints.length < 3) return;
-      const latlngs = hole.greenPoints.map((p) => [p.lat, p.lng] as [number, number]);
-      L.polygon(latlngs, {
-        color: "#44DD44",
-        weight: 1.5,
-        opacity: 0.6,
-        fillColor: "#44DD44",
-        fillOpacity: 0.12,
-      }).addTo(linesRef.current!);
+      // Tee marker (draggable)
+      if (hole.teeLat != null && hole.teeLng != null) {
+        const color = HOLE_COLORS[(hole.number - 1) % HOLE_COLORS.length];
+        const teeIcon = L.divIcon({
+          className: "",
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+          html: `<div style="
+            width:22px;height:22px;
+            background:${color}30;border:2px solid ${color};border-radius:4px;
+            display:flex;align-items:center;justify-content:center;
+            font-size:9px;font-weight:700;color:${color};cursor:grab;
+          ">T${hole.number}</div>`,
+        });
+        const teeMarker = L.marker([hole.teeLat, hole.teeLng], { icon: teeIcon, draggable: true }).addTo(linesRef.current!);
+        teeMarker.bindTooltip(`Tee ${hole.number}`, { direction: "top", offset: [0, -12] });
+        teeMarker.on("click", () => {
+          markerClickedRef.current = true;
+          if (onActiveHoleChange) onActiveHoleChange(hole.number - 1);
+        });
+        teeMarker.on("dragstart", () => { markerClickedRef.current = true; });
+        teeMarker.on("dragend", () => {
+          markerClickedRef.current = true;
+          const pos = teeMarker.getLatLng();
+          if (onTeePositioned) onTeePositioned(hole.number - 1, pos.lat, pos.lng);
+        });
+
+        // Line from tee to green
+        if (hole.latitude != null && hole.longitude != null) {
+          L.polyline(
+            [[hole.teeLat, hole.teeLng], [hole.latitude, hole.longitude]],
+            { color, weight: 1.5, opacity: 0.4, dashArray: "4,4" }
+          ).addTo(linesRef.current!);
+        }
+      }
     });
   }, [holes, activeHole, onHolePositioned]);
 
@@ -489,7 +498,61 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
               </button>
             </div>
 
-            {/* Zone controls */}
+            {/* Holes controls */}
+            {mode === "holes" && (
+              <div className="flex flex-col gap-1.5">
+              {/* Place / Move toggle */}
+              <div className="flex gap-1 p-1 rounded-xl bg-dark/80 backdrop-blur-sm border border-white/10">
+                <button type="button" onClick={() => setHoleAction("move")}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${holeAction === "move" ? "bg-white/15 text-white" : "text-gray-500 hover:text-white"}`}>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v6M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.9-2.4L2.3 15.7a2 2 0 0 1 2.9-2.8L6 14"/></svg>
+                  Deplacer
+                </button>
+                <button type="button" onClick={() => setHoleAction("place")}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${holeAction === "place" ? "bg-accent/20 text-accent" : "text-gray-500 hover:text-white"}`}>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                  Placer
+                </button>
+              </div>
+
+              {/* Holes list */}
+              <div className="flex flex-col gap-0.5 p-1 rounded-xl bg-dark/80 backdrop-blur-sm border border-white/10">
+                <div className="flex items-center gap-1 px-2 py-1 border-b border-white/[0.06]">
+                  <span className="text-[9px] text-gray-500 font-medium w-5">N°</span>
+                  <span className="text-[9px] text-gray-500 font-medium flex-1 text-center">🏁</span>
+                  <span className="text-[9px] text-gray-500 font-medium flex-1 text-center">Tee</span>
+                </div>
+                {holes.map((hole, i) => (
+                  <div key={hole.number} className={`flex items-center gap-1 px-1 rounded-lg transition-all ${activeHole === i ? "bg-white/[0.08]" : ""}`}>
+                    <span className={`text-[10px] font-bold w-5 text-center ${activeHole === i ? "text-white" : "text-gray-500"}`}>{hole.number}</span>
+                    <button type="button" onClick={() => { if (onActiveHoleChange) onActiveHoleChange(i); setHoleTool("green"); }}
+                      className={`flex-1 flex items-center justify-center py-1 rounded-md transition-all ${
+                        activeHole === i && holeTool === "green"
+                          ? "bg-accent/25 border border-accent/50"
+                          : "border border-transparent"
+                      }`}>
+                      {hole.latitude != null
+                        ? <div className={`w-2.5 h-2.5 rounded-full ${activeHole === i && holeTool === "green" ? "bg-accent" : "bg-accent/50"}`} />
+                        : <div className={`w-2.5 h-2.5 rounded-full border ${activeHole === i && holeTool === "green" ? "border-accent" : "border-gray-600"}`} />
+                      }
+                    </button>
+                    <button type="button" onClick={() => { if (onActiveHoleChange) onActiveHoleChange(i); setHoleTool("tee"); }}
+                      className={`flex-1 flex items-center justify-center py-1 rounded-md transition-all ${
+                        activeHole === i && holeTool === "tee"
+                          ? "bg-blue-500/25 border border-blue-500/50"
+                          : "border border-transparent"
+                      }`}>
+                      {hole.teeLat != null
+                        ? <div className={`w-2.5 h-2.5 rounded-sm ${activeHole === i && holeTool === "tee" ? "bg-blue-400" : "bg-blue-400/50"}`} />
+                        : <div className={`w-2.5 h-2.5 rounded-sm border ${activeHole === i && holeTool === "tee" ? "border-blue-400" : "border-gray-600"}`} />
+                      }
+                    </button>
+                  </div>
+                ))}
+              </div>
+              </div>
+            )}
+
             {mode === "zones" && (
               <div className="flex flex-col gap-1">
                 {/* Draw / Pan toggle */}

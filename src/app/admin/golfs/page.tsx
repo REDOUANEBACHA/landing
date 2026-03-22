@@ -83,16 +83,19 @@ function CourseModal({
       return course.courseHoles.map((h: any) => ({
         number: h.number, par: h.par, distance: h.distance,
         latitude: h.latitude ?? null, longitude: h.longitude ?? null,
+        teeLat: h.teeLat ?? null, teeLng: h.teeLng ?? null,
         greenPoints: h.greenPoints ?? null,
       }));
     }
     return Array.from({ length: initialHolesCount }, (_, i) => ({
       number: i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null,
+      teeLat: null as number | null, teeLng: null as number | null,
       greenPoints: null as { lat: number; lng: number }[] | null,
     }));
   };
   const [courseHoles, setCourseHoles] = useState(buildInitialHoles);
   const [activeHoleIndex, setActiveHoleIndex] = useState(0);
+  const [holeTool, setHoleTool] = useState<"green" | "tee">("green");
   const [courseZones, setCourseZones] = useState<{ type: string; points: { lat: number; lng: number }[]; id?: string }[]>([]);
   const [zonesLoaded, setZonesLoaded] = useState(false);
 
@@ -155,6 +158,15 @@ function CourseModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseHoles.length]);
 
+  const handleTeePositioned = useCallback((holeIndex: number, lat: number, lng: number) => {
+    setCourseHoles((prev) => prev.map((h, i) => (i === holeIndex ? { ...h, teeLat: lat, teeLng: lng } : h)));
+    setActiveHoleIndex((prev) => {
+      const next = holeIndex + 1;
+      return next < courseHoles.length ? next : prev;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseHoles.length]);
+
   const [address, setAddress] = useState("");
   const [geoResults, setGeoResults] = useState<GeoResult[]>([]);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -202,7 +214,7 @@ function CourseModal({
               for (const dh of data.holes) {
                 const idx = dh.number - 1;
                 if (idx >= 0 && idx < updated.length) {
-                  updated[idx] = { ...updated[idx], latitude: dh.latitude, longitude: dh.longitude, par: dh.par || updated[idx].par, greenPoints: dh.greenPoints || updated[idx].greenPoints };
+                  updated[idx] = { ...updated[idx], latitude: dh.latitude, longitude: dh.longitude, teeLat: dh.teeLat || updated[idx].teeLat, teeLng: dh.teeLng || updated[idx].teeLng, par: dh.par || updated[idx].par, greenPoints: dh.greenPoints || updated[idx].greenPoints };
                 }
               }
               return recalcDistances(updated);
@@ -247,6 +259,7 @@ function CourseModal({
         courseHoles: courseHoles.map((h) => ({
           number: h.number, par: h.par, distance: h.distance,
           ...(h.latitude != null && h.longitude != null ? { latitude: h.latitude, longitude: h.longitude } : {}),
+          ...(h.teeLat != null && h.teeLng != null ? { teeLat: h.teeLat, teeLng: h.teeLng } : {}),
           ...(h.greenPoints ? { greenPoints: h.greenPoints } : {}),
         })),
       };
@@ -376,38 +389,76 @@ function CourseModal({
             <label className="block text-[12px] text-gray-500 font-medium mb-2">Details des trous &amp; positions GPS</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl overflow-hidden">
-                <div className="grid grid-cols-[40px_1fr_1fr_20px] gap-1.5 px-3 py-2 border-b border-white/[0.04]">
+                <div className="grid grid-cols-[32px_1fr_1fr_28px_28px] gap-1 px-3 py-2 border-b border-white/[0.04]">
                   <span className="text-[10px] text-gray-600 font-medium uppercase">N°</span>
                   <span className="text-[10px] text-gray-600 font-medium uppercase">Par</span>
                   <span className="text-[10px] text-gray-600 font-medium uppercase">Dist.</span>
-                  <span className="text-[10px] text-gray-600 font-medium uppercase">GPS</span>
+                  <span className="text-[10px] text-gray-600 font-medium uppercase text-center" title="Drapeau">🏁</span>
+                  <span className="text-[10px] text-gray-600 font-medium uppercase text-center" title="Tee">T</span>
                 </div>
                 <div className="max-h-[500px] overflow-y-auto overscroll-contain relative z-10">
                   {courseHoles.map((hole, i) => (
-                    <button type="button" key={i} onClick={() => setActiveHoleIndex(i)} className={`w-full grid grid-cols-[40px_1fr_1fr_20px] gap-1.5 px-3 py-1.5 border-b border-white/[0.02] last:border-0 items-center transition-colors ${activeHoleIndex === i ? "bg-accent/10" : "hover:bg-white/[0.02]"}`}>
+                    <div key={i} className={`grid grid-cols-[32px_1fr_1fr_28px_28px] gap-1 px-3 py-1 border-b border-white/[0.02] last:border-0 items-center transition-colors ${activeHoleIndex === i ? "bg-white/[0.04]" : "hover:bg-white/[0.02]"}`}>
                       <span className={`text-[12px] font-bold text-center ${activeHoleIndex === i ? "text-accent" : "text-gray-400"}`}>{hole.number}</span>
-                      <select value={hole.par} onClick={(e) => e.stopPropagation()} onChange={(e) => updateHole(i, "par", Number(e.target.value))} className="bg-white/[0.03] border border-white/[0.06] rounded-md px-1.5 py-1 text-[11px] text-gray-200 focus:outline-none focus:border-accent/30">
+                      <select value={hole.par} onChange={(e) => updateHole(i, "par", Number(e.target.value))} className="bg-white/[0.03] border border-white/[0.06] rounded-md px-1.5 py-1 text-[11px] text-gray-200 focus:outline-none focus:border-accent/30">
                         {[3, 4, 5].map((p) => (<option key={p} value={p} className="bg-surface text-gray-200">{p}</option>))}
                       </select>
-                      <input type="number" min={50} max={700} value={hole.distance} onClick={(e) => e.stopPropagation()} onChange={(e) => updateHole(i, "distance", Number(e.target.value))} className="bg-white/[0.03] border border-white/[0.06] rounded-md px-1.5 py-1 text-[11px] text-gray-200 focus:outline-none focus:border-accent/30 w-full" />
-                      <div className="flex justify-center">
-                        {hole.latitude != null ? <CheckCircle2 className="w-3.5 h-3.5 text-accent" /> : <div className="w-3 h-3 rounded-full border border-gray-600" />}
-                      </div>
-                    </button>
+                      <input type="number" min={50} max={700} value={hole.distance} onChange={(e) => updateHole(i, "distance", Number(e.target.value))} className="bg-white/[0.03] border border-white/[0.06] rounded-md px-1.5 py-1 text-[11px] text-gray-200 focus:outline-none focus:border-accent/30 w-full" />
+                      <button
+                        type="button"
+                        onClick={() => { setActiveHoleIndex(i); setHoleTool("green"); }}
+                        className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
+                          activeHoleIndex === i && holeTool === "green"
+                            ? "bg-accent/20 border border-accent/50"
+                            : hole.latitude != null
+                              ? "bg-accent/10 border border-transparent"
+                              : "border border-white/[0.06]"
+                        }`}
+                        title="Placer le drapeau"
+                      >
+                        {hole.latitude != null
+                          ? <CheckCircle2 className={`w-3.5 h-3.5 ${activeHoleIndex === i && holeTool === "green" ? "text-accent" : "text-accent/60"}`} />
+                          : <div className={`w-2.5 h-2.5 rounded-full ${activeHoleIndex === i && holeTool === "green" ? "bg-accent" : "border border-gray-600"}`} />
+                        }
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveHoleIndex(i); setHoleTool("tee"); }}
+                        className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
+                          activeHoleIndex === i && holeTool === "tee"
+                            ? "bg-blue-500/20 border border-blue-500/50"
+                            : hole.teeLat != null
+                              ? "bg-blue-500/10 border border-transparent"
+                              : "border border-white/[0.06]"
+                        }`}
+                        title="Placer le tee"
+                      >
+                        {hole.teeLat != null
+                          ? <CheckCircle2 className={`w-3.5 h-3.5 ${activeHoleIndex === i && holeTool === "tee" ? "text-blue-400" : "text-blue-400/60"}`} />
+                          : <div className={`w-2.5 h-2.5 rounded-full ${activeHoleIndex === i && holeTool === "tee" ? "bg-blue-400" : "border border-gray-600"}`} />
+                        }
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
               <div>
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-[11px] text-gray-500">Cliquez pour placer le <span className="text-accent font-semibold">trou {activeHoleIndex + 1}</span></p>
-                  <p className="text-[10px] text-gray-600">{courseHoles.filter((h) => h.latitude != null).length}/{courseHoles.length} places</p>
+                  <p className="text-[11px] text-gray-500">
+                    Cliquez pour placer {holeTool === "tee" ? <span className="text-blue-400 font-semibold">le tee du trou {activeHoleIndex + 1}</span> : <span className="text-accent font-semibold">le drapeau du trou {activeHoleIndex + 1}</span>}
+                  </p>
+                  <p className="text-[10px] text-gray-600">{courseHoles.filter((h) => h.latitude != null).length}/{courseHoles.length}</p>
                 </div>
                 {form.latitude !== 0 && form.longitude !== 0 ? (
                   <HoleMap
                     center={[form.latitude, form.longitude]}
-                    holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude, greenPoints: h.greenPoints }))}
+                    holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude, teeLat: h.teeLat, teeLng: h.teeLng, greenPoints: h.greenPoints }))}
                     activeHole={activeHoleIndex}
                     onHolePositioned={handleHolePositioned}
+                    onTeePositioned={handleTeePositioned}
+                    onActiveHoleChange={setActiveHoleIndex}
+                    holeTool={holeTool}
+                    onHoleToolChange={setHoleTool}
                     onSave={doSave}
                     saving={saving}
                     zones={courseZones}
@@ -423,6 +474,8 @@ function CourseModal({
                               ...updated[idx],
                               latitude: dh.latitude,
                               longitude: dh.longitude,
+                              teeLat: (dh as any).teeLat || updated[idx].teeLat,
+                              teeLng: (dh as any).teeLng || updated[idx].teeLng,
                               par: dh.par || updated[idx].par,
                               greenPoints: dh.greenPoints || updated[idx].greenPoints,
                             };
