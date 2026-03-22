@@ -16,6 +16,7 @@ import {
   Activity,
   Trophy,
   MapPin,
+  AlertTriangle,
 } from "lucide-react";
 
 const sidebarItems = [
@@ -23,6 +24,7 @@ const sidebarItems = [
   { icon: <MapPin className="w-4.5 h-4.5" />, label: "Golfs", href: "/admin/golfs" },
   { icon: <Users className="w-4.5 h-4.5" />, label: "Utilisateurs", href: "/admin/users" },
   { icon: <Bell className="w-4.5 h-4.5" />, label: "Notifications", href: "/admin/notifications" },
+  { icon: <AlertTriangle className="w-4.5 h-4.5" />, label: "Déclarations", href: "/admin/declarations" },
   { icon: <Trophy className="w-4.5 h-4.5" />, label: "Concours", href: "/admin/contests" },
   { icon: <Medal className="w-4.5 h-4.5" />, label: "Modules", href: "/admin/modules" },
   { icon: <CreditCard className="w-4.5 h-4.5" />, label: "Abonnements", href: "/admin/subscriptions" },
