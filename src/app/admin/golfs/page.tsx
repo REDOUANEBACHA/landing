@@ -91,6 +91,18 @@ function CourseModal({
   };
   const [courseHoles, setCourseHoles] = useState(buildInitialHoles);
   const [activeHoleIndex, setActiveHoleIndex] = useState(0);
+  const [courseZones, setCourseZones] = useState<{ type: string; points: { lat: number; lng: number }[]; id?: string }[]>([]);
+  const [zonesLoaded, setZonesLoaded] = useState(false);
+
+  // Load existing zones when editing
+  useEffect(() => {
+    if (!isEdit || zonesLoaded) return;
+    fetch(`${API}/courses/${course.id}/zones`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setCourseZones(data))
+      .catch(() => {})
+      .finally(() => setZonesLoaded(true));
+  }, [isEdit, zonesLoaded]);
 
   const updateHolesCount = (count: number) => {
     const n = Math.max(1, Math.min(36, count));
@@ -212,6 +224,28 @@ function CourseModal({
       };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
+      const savedCourse = await res.json();
+      const courseId = savedCourse.id || course?.id;
+
+      // Save zones: delete old ones, create new ones
+      if (courseId) {
+        // Delete existing zones
+        if (isEdit) {
+          const existingZones = await (await fetch(`${API}/courses/${courseId}/zones`)).json();
+          for (const z of existingZones) {
+            await fetch(`${API}/courses/${courseId}/zones/${z.id}`, { method: "DELETE" });
+          }
+        }
+        // Create new zones
+        for (const z of courseZones) {
+          await fetch(`${API}/courses/${courseId}/zones`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: z.type, points: z.points }),
+          });
+        }
+      }
+
       onSaved();
       onClose();
     } catch { setError("Erreur lors de la sauvegarde"); }
@@ -341,7 +375,7 @@ function CourseModal({
                   <p className="text-[10px] text-gray-600">{courseHoles.filter((h) => h.latitude != null).length}/{courseHoles.length} places</p>
                 </div>
                 {form.latitude !== 0 && form.longitude !== 0 ? (
-                  <HoleMap center={[form.latitude, form.longitude]} holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude }))} activeHole={activeHoleIndex} onHolePositioned={handleHolePositioned} onSave={doSave} saving={saving} />
+                  <HoleMap center={[form.latitude, form.longitude]} holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude }))} activeHole={activeHoleIndex} onHolePositioned={handleHolePositioned} onSave={doSave} saving={saving} zones={courseZones} onZonesChange={setCourseZones} />
                 ) : (
                   <div className="w-full rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center justify-center" style={{ height: 350 }}>
                     <p className="text-[13px] text-gray-600 text-center px-4">Recherchez une adresse pour afficher la carte</p>
