@@ -37,6 +37,7 @@ interface HoleMapProps {
   saving?: boolean;
   zones?: ZoneData[];
   onZonesChange?: (zones: ZoneData[]) => void;
+  courseId?: string;
 }
 
 // Color per hole for markers
@@ -81,7 +82,9 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
   return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
-export default function HoleMap({ center, holes, activeHole, onHolePositioned, onSave, saving, zones = [], onZonesChange }: HoleMapProps) {
+const API = process.env.NEXT_PUBLIC_API_URL!;
+
+export default function HoleMap({ center, holes, activeHole, onHolePositioned, onSave, saving, zones = [], onZonesChange, courseId }: HoleMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
@@ -94,6 +97,8 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
   const [zoneDraft, setZoneDraft] = useState<ZonePoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const drawingRef = useRef(false);
+  const boundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const [golfBoundary, setGolfBoundary] = useState<ZonePoint[] | null>(null);
 
   // Initialize map
   useEffect(() => {
@@ -125,6 +130,7 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
         maxZoom: 21,
       }).addTo(map);
 
+      boundaryLayerRef.current = L.layerGroup().addTo(map);
       zonesLayerRef.current = L.layerGroup().addTo(map);
       draftLayerRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
@@ -279,6 +285,22 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
     }
   }, [holes, activeHole, onHolePositioned]);
 
+  // Draw golf boundary
+  useEffect(() => {
+    if (!boundaryLayerRef.current) return;
+    boundaryLayerRef.current.clearLayers();
+    if (!golfBoundary || golfBoundary.length < 3) return;
+    const latlngs = golfBoundary.map((p) => [p.lat, p.lng] as [number, number]);
+    L.polygon(latlngs, {
+      color: "#82FFB4",
+      weight: 2,
+      opacity: 0.5,
+      fillColor: "#82FFB4",
+      fillOpacity: 0.03,
+      dashArray: "8,6",
+    }).addTo(boundaryLayerRef.current);
+  }, [golfBoundary]);
+
   // Draw saved zones
   useEffect(() => {
     if (!zonesLayerRef.current) return;
@@ -336,6 +358,38 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
   const removeZone = (index: number) => {
     if (!onZonesChange) return;
     onZonesChange(zones.filter((_, i) => i !== index));
+  };
+
+  const [detecting, setDetecting] = useState(false);
+
+  const handleAutoDetect = async () => {
+    if (!onZonesChange) return;
+    setDetecting(true);
+    try {
+      const url = courseId
+        ? `${API}/courses/${courseId}/detect-zones`
+        : `${API}/courses/detect-zones-by-coords`;
+      const body = courseId
+        ? { radius: 500 }
+        : { latitude: center[0], longitude: center[1], radius: 500 };
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("Detection failed");
+      const data = await res.json();
+      if (data.boundary) {
+        setGolfBoundary(data.boundary);
+      }
+      if (data.zones && data.zones.length > 0) {
+        onZonesChange([...zones, ...data.zones.map((z: any) => ({ type: z.type, points: z.points }))]);
+      }
+    } catch (e) {
+      console.error("Auto-detect error:", e);
+    } finally {
+      setDetecting(false);
+    }
   };
 
   // Recenter when center changes
@@ -463,6 +517,28 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
                   <div className="mt-1 px-2.5 py-1.5 rounded-lg bg-dark/70 border border-white/10 text-[10px] text-gray-300 backdrop-blur-sm animate-pulse">
                     Tracez la zone...
                   </div>
+                )}
+
+                {/* AI auto-detect button */}
+                {(courseId || (center[0] !== 0 && center[1] !== 0)) && (
+                  <button
+                    type="button"
+                    onClick={handleAutoDetect}
+                    disabled={detecting}
+                    className="mt-1 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-500/15 border border-purple-500/30 text-[10px] font-bold text-purple-400 hover:bg-purple-500/25 transition-all backdrop-blur-sm disabled:opacity-50"
+                  >
+                    {detecting ? (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2a4 4 0 0 0-4 4c0 2 2 3 2 6H8" /><path d="M14 12h-2s2-4 2-6a4 4 0 0 0-4-4" />
+                        <circle cx="12" cy="17" r="3" /><path d="M12 20v2" />
+                      </svg>
+                    )}
+                    {detecting ? "Detection..." : "Detection AI"}
+                  </button>
                 )}
 
                 {/* Saved zones list */}

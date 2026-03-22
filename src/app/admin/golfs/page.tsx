@@ -184,6 +184,19 @@ function CourseModal({
     setAddress(r.displayName);
     setGeoResults([]);
     setGeoSelected(true);
+    // Auto-fetch golf boundary + zones from OSM
+    if (!isEdit) {
+      fetch(`${API}/courses/detect-zones-by-coords`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: r.latitude, longitude: r.longitude, radius: 600 }),
+      })
+        .then((res) => res.ok ? res.json() : null)
+        .then((data) => {
+          if (data?.zones) setCourseZones(data.zones.map((z: any) => ({ type: z.type, points: z.points })));
+        })
+        .catch(() => {});
+    }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -375,7 +388,7 @@ function CourseModal({
                   <p className="text-[10px] text-gray-600">{courseHoles.filter((h) => h.latitude != null).length}/{courseHoles.length} places</p>
                 </div>
                 {form.latitude !== 0 && form.longitude !== 0 ? (
-                  <HoleMap center={[form.latitude, form.longitude]} holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude }))} activeHole={activeHoleIndex} onHolePositioned={handleHolePositioned} onSave={doSave} saving={saving} zones={courseZones} onZonesChange={setCourseZones} />
+                  <HoleMap center={[form.latitude, form.longitude]} holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude }))} activeHole={activeHoleIndex} onHolePositioned={handleHolePositioned} onSave={doSave} saving={saving} zones={courseZones} onZonesChange={setCourseZones} courseId={isEdit ? course.id : undefined} />
                 ) : (
                   <div className="w-full rounded-xl border border-white/[0.06] bg-white/[0.02] flex items-center justify-center" style={{ height: 350 }}>
                     <p className="text-[13px] text-gray-600 text-center px-4">Recherchez une adresse pour afficher la carte</p>
