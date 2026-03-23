@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   X,
   Search,
+  ImageIcon,
+  Upload,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL!;
@@ -41,6 +43,9 @@ export default function NotificationsPage() {
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [image, setImage] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{ sent: number } | null>(null);
   const [error, setError] = useState("");
@@ -73,8 +78,9 @@ export default function NotificationsPage() {
     setError("");
     setResult(null);
     try {
-      const payload: { title: string; body: string; userId?: string } = { title, body };
+      const payload: { title: string; body: string; userId?: string; image?: string } = { title, body };
       if (selectedUser) payload.userId = selectedUser.id;
+      if (image) payload.image = image;
       const res = await adminFetch("/notify", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -84,6 +90,8 @@ export default function NotificationsPage() {
       setResult(data);
       setTitle("");
       setBody("");
+      setImage("");
+      setImagePreview(null);
     } catch (e: any) {
       setError(e.message || "Erreur lors de l'envoi");
     } finally {
@@ -173,6 +181,61 @@ export default function NotificationsPage() {
               rows={3}
               className="w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2 text-[13px] text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent/30 transition-colors resize-none"
             />
+          </div>
+
+          {/* Image */}
+          <div className="mb-5">
+            <label className="block text-[12px] text-gray-500 font-medium mb-1.5">Image (optionnel)</label>
+            <div className="flex items-start gap-3">
+              {imagePreview ? (
+                <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-white/[0.06] shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
+                  <button onClick={() => { setImage(""); setImagePreview(null); }} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+                    <X className="w-3 h-3 text-white" />
+                  </button>
+                </div>
+              ) : (
+                <div className="w-20 h-20 rounded-lg border border-white/[0.06] bg-white/[0.02] flex items-center justify-center shrink-0">
+                  <ImageIcon className="w-6 h-6 text-gray-700" />
+                </div>
+              )}
+              <div className="flex-1">
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/[0.06] text-[12px] font-medium text-gray-400 hover:bg-white/[0.03] transition-colors cursor-pointer">
+                  <Upload className="w-3.5 h-3.5" />
+                  {imagePreview ? "Changer" : "Uploader une image"}
+                  <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setUploading(true);
+                    try {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+                      reader.readAsDataURL(file);
+                      const formData = new FormData();
+                      formData.append("image", file);
+                      const res = await fetch(`${API}/courses/upload-image`, { method: "POST", body: formData });
+                      if (!res.ok) throw new Error();
+                      const { imageUrl } = await res.json();
+                      setImage(imageUrl);
+                    } catch { setError("Erreur lors de l'upload de l'image"); setImagePreview(null); }
+                    finally { setUploading(false); }
+                  }} />
+                </label>
+                <p className="text-[11px] text-gray-600 mt-1.5">JPG, PNG. Apparait dans la notification.</p>
+                {uploading && <p className="text-[11px] text-accent mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Upload...</p>}
+                {image && !uploading && <p className="text-[11px] text-accent mt-1 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Image prete</p>}
+              </div>
+            </div>
+            <div className="mt-2">
+              <span className="text-[11px] text-gray-600">Ou collez un lien : </span>
+              <input
+                value={image}
+                onChange={(e) => { setImage(e.target.value); setImagePreview(e.target.value || null); }}
+                placeholder="https://..."
+                className="mt-1 w-full bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-1.5 text-[12px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-accent/30"
+              />
+            </div>
           </div>
 
           {error && (
