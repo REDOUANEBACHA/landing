@@ -115,7 +115,7 @@ function CourseModal({
     setCourseHoles((prev) => {
       if (n > prev.length) {
         return [...prev, ...Array.from({ length: n - prev.length }, (_, i) => ({
-          number: prev.length + i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null,
+          number: prev.length + i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null, teeLat: null as number | null, teeLng: null as number | null, greenPoints: null as { lat: number; lng: number }[] | null,
         }))];
       }
       return prev.slice(0, n);
