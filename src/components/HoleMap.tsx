@@ -129,13 +129,11 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
       container.addEventListener("mouseenter", () => map.scrollWheelZoom.enable());
       container.addEventListener("mouseleave", () => map.scrollWheelZoom.disable());
 
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-        attribution: "Esri",
-        maxZoom: 21,
-      }).addTo(map);
-
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}", {
-        maxZoom: 21,
+      const mbToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+      L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}@2x?access_token=${mbToken}`, {
+        maxZoom: 22,
+        tileSize: 512,
+        zoomOffset: -1,
       }).addTo(map);
 
       boundaryLayerRef.current = L.layerGroup().addTo(map);

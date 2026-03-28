@@ -34,10 +34,10 @@ export default function ZoneEditor({ center, zones, onZonesChange }: Props) {
     if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
 
     const map = L.map(containerRef.current, { center, zoom: 16, zoomControl: false });
-    L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 20, attribution: "Esri" }
-    ).addTo(map);
+    const mbToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}@2x?access_token=${mbToken}`, {
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
 
     draftLayerRef.current = L.layerGroup().addTo(map);

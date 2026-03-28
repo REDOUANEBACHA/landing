@@ -51,11 +51,11 @@ export default function DeclarationMap({ declaration, courseZones, typeConfig, z
       zoomControl: false,
     });
 
-    // Satellite tile layer
-    L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 20, attribution: "Esri" }
-    ).addTo(map);
+    // Satellite tile layer (Mapbox)
+    const mbToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+    L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/tiles/{z}/{x}/{y}@2x?access_token=${mbToken}`, {
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }).addTo(map);
 
     // Zoom control bottom right
     L.control.zoom({ position: "bottomright" }).addTo(map);
