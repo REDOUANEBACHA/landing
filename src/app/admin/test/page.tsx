@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import {
   MapPin,
   Phone,
@@ -11,13 +9,8 @@ import {
   X,
 } from "lucide-react";
 
-// Fix Leaflet default icons
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LeafletLib = any;
 
 // ── Mock Data ──────────────────────────────────────────────────────────
 
@@ -116,7 +109,7 @@ const HOLE_COLORS = [
   "#FACC15","#818CF8","#F97316","#22D3EE","#C084FC","#EF4444",
 ];
 
-function teeIcon(hole: number, active: boolean) {
+function teeIcon(L: LeafletLib, hole: number, active: boolean) {
   const color = HOLE_COLORS[(hole - 1) % 18];
   const size = active ? 28 : 22;
   return L.divIcon({
@@ -127,7 +120,7 @@ function teeIcon(hole: number, active: boolean) {
   });
 }
 
-function greenIcon(_hole: number, active: boolean) {
+function greenIcon(L: LeafletLib, _hole: number, active: boolean) {
   const size = active ? 24 : 18;
   return L.divIcon({
     className: "",
@@ -137,7 +130,7 @@ function greenIcon(_hole: number, active: boolean) {
   });
 }
 
-function fwIcon() {
+function fwIcon(L: LeafletLib) {
   return L.divIcon({
     className: "",
     iconSize: [8, 8],
@@ -159,9 +152,10 @@ function CourseMap({
   fullscreen?: boolean;
   selectedTeeIdx: number;
 }) {
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef = useRef<LeafletLib | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const layersRef = useRef<L.LayerGroup | null>(null);
+  const layersRef = useRef<LeafletLib | null>(null);
+  const leafletRef = useRef<LeafletLib | null>(null);
   const onHoleClickRef = useRef(onHoleClick);
   onHoleClickRef.current = onHoleClick;
   const selectedHoleRef = useRef(selectedHole);
@@ -169,30 +163,44 @@ function CourseMap({
 
   useEffect(() => {
     if (!containerRef.current) return;
-    if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+    let cancelled = false;
 
-    const map = L.map(containerRef.current, {
-      center: [CLUB.latitude, CLUB.longitude],
-      zoom: 15,
-      zoomControl: fullscreen ?? false,
-      attributionControl: false,
+    import("leaflet").then((leaflet) => {
+      if (cancelled || !containerRef.current) return;
+      // @ts-expect-error -- CSS import handled by bundler
+      import("leaflet/dist/leaflet.css");
+
+      const L = leaflet.default;
+      leafletRef.current = L;
+
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+
+      const map = L.map(containerRef.current, {
+        center: [CLUB.latitude, CLUB.longitude],
+        zoom: 15,
+        zoomControl: fullscreen ?? false,
+        attributionControl: false,
+      });
+
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 19 }
+      ).addTo(map);
+
+      mapRef.current = map;
+      layersRef.current = L.layerGroup().addTo(map);
+
+      renderLayers(L, map, layersRef.current);
     });
 
-    L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      { maxZoom: 19 }
-    ).addTo(map);
-
-    mapRef.current = map;
-    layersRef.current = L.layerGroup().addTo(map);
-
-    return () => { map.remove(); mapRef.current = null; };
+    return () => {
+      cancelled = true;
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullscreen]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    const layers = layersRef.current;
-    if (!map || !layers) return;
+  const renderLayers = (L: LeafletLib, map: LeafletLib, layers: LeafletLib) => {
     layers.clearLayers();
 
     const holes = Array.from({ length: 18 }, (_, i) => i + 1).filter(
@@ -211,7 +219,6 @@ function CourseMap({
           color, weight: isActive ? 3 : 2, dashArray: "6 4", opacity: isActive ? 1 : 0.6,
         }).addTo(layers);
 
-        // Distance label for active hole
         if (isActive) {
           const dist = COURSE.tees[selectedTeeIdx].lengths[h - 1];
           const midLat = (tee.lat + green.lat) / 2;
@@ -227,14 +234,14 @@ function CourseMap({
       }
 
       if (tee) {
-        const m = L.marker([tee.lat, tee.lng], { icon: teeIcon(h, isActive) }).addTo(layers);
+        const m = L.marker([tee.lat, tee.lng], { icon: teeIcon(L, h, isActive) }).addTo(layers);
         m.on("click", () => onHoleClickRef.current(selectedHoleRef.current === h ? null : h));
       }
       if (green) {
-        L.marker([green.lat, green.lng], { icon: greenIcon(h, isActive) }).addTo(layers);
+        L.marker([green.lat, green.lng], { icon: greenIcon(L, h, isActive) }).addTo(layers);
       }
       if (fw && (fullscreen || selectedHole)) {
-        L.marker([fw.lat, fw.lng], { icon: fwIcon() }).addTo(layers);
+        L.marker([fw.lat, fw.lng], { icon: fwIcon(L) }).addTo(layers);
       }
     }
 
@@ -248,6 +255,15 @@ function CourseMap({
       const all = COORDS.map((c) => [c.lat, c.lng] as [number, number]);
       if (all.length) map.fitBounds(all, { padding: [30, 30] });
     }
+  };
+
+  useEffect(() => {
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    const layers = layersRef.current;
+    if (!L || !map || !layers) return;
+    renderLayers(L, map, layers);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedHole, fullscreen, selectedTeeIdx]);
 
   return <div ref={containerRef} className="w-full h-full" />;
