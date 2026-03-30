@@ -18,6 +18,7 @@ import {
   MapPin,
   AlertTriangle,
   Route,
+  FlaskConical,
 } from "lucide-react";
 
 const sidebarItems = [
@@ -32,6 +33,7 @@ const sidebarItems = [
   { icon: <CreditCard className="w-4.5 h-4.5" />, label: "Abonnements", href: "/admin/subscriptions" },
   { icon: <Activity className="w-4.5 h-4.5" />, label: "Activite", href: "/admin/activity" },
   { icon: <Settings className="w-4.5 h-4.5" />, label: "Parametres", href: "/admin/settings" },
+  { icon: <FlaskConical className="w-4.5 h-4.5" />, label: "Test API", href: "/admin/test" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
