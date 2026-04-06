@@ -19,6 +19,14 @@ import {
 const HoleMap = dynamic(() => import("@/components/HoleMap"), { ssr: false });
 
 const API = process.env.NEXT_PUBLIC_API_URL!;
+const GOLF_API = "https://golfapi.io/api/v2.3";
+const GOLF_API_KEY = "11389321-81c0-4a58-8573-d7ca3d6f298a";
+
+function golfApiFetch(path: string) {
+  return fetch(`${GOLF_API}${path}`, {
+    headers: { Authorization: `Bearer ${GOLF_API_KEY}` },
+  });
+}
 
 /* ---- Types ---- */
 interface CourseHole {
@@ -28,6 +36,18 @@ interface CourseHole {
   distance: number;
   latitude?: number | null;
   longitude?: number | null;
+}
+
+interface CourseTee {
+  id: string;
+  name: string;
+  color: string;
+  lengths: number[];
+  crMen: number | null;
+  sMen: number | null;
+  crWomen: number | null;
+  sWomen: number | null;
+  golfApiTeeId?: string;
 }
 
 interface Course {
@@ -42,6 +62,7 @@ interface Course {
   imageUrl: string | null;
   rating: number | null;
   courseHoles?: CourseHole[];
+  courseTees?: CourseTee[];
 }
 
 interface GeoResult {
@@ -50,6 +71,57 @@ interface GeoResult {
   longitude: number;
   city: string;
   country: string;
+}
+
+/* ---- Golf API Types ---- */
+interface GolfApiClub {
+  clubID: string;
+  clubName: string;
+  city: string;
+  state: string;
+  country: string;
+  courses: { courseID: string; courseName: string; numHoles: number; hasGPS: number }[];
+}
+
+interface GolfApiCourse {
+  clubID: string;
+  clubName: string;
+  address: string;
+  postalCode: string;
+  city: string;
+  state: string;
+  country: string;
+  latitude: string;
+  longitude: string;
+  website: string;
+  telephone: string;
+  courseID: string;
+  courseName: string;
+  numHoles: string;
+  measure: string;
+  parsMen: number[];
+  indexesMen: number[];
+  parsWomen: number[];
+  indexesWomen: number[];
+  tees: {
+    teeID: string;
+    teeName: string;
+    teeColor: string;
+    courseRatingMen: number | string;
+    slopeMen: number | string;
+    courseRatingWomen: number | string;
+    slopeWomen: number | string;
+    [key: string]: unknown; // length1..length18
+  }[];
+}
+
+interface GolfApiCoord {
+  poi: number;
+  hole: number;
+  latitude: string;
+  longitude: string;
+  location: number;
+  sideFW: number;
 }
 
 /* ---- Course Form Modal ---- */
@@ -85,12 +157,14 @@ function CourseModal({
         latitude: h.latitude ?? null, longitude: h.longitude ?? null,
         teeLat: h.teeLat ?? null, teeLng: h.teeLng ?? null,
         greenPoints: h.greenPoints ?? null,
+        waypoints: h.waypoints ?? null,
       }));
     }
     return Array.from({ length: initialHolesCount }, (_, i) => ({
       number: i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null,
       teeLat: null as number | null, teeLng: null as number | null,
       greenPoints: null as { lat: number; lng: number }[] | null,
+      waypoints: null as { lat: number; lng: number }[] | null,
     }));
   };
   const [courseHoles, setCourseHoles] = useState(buildInitialHoles);
@@ -115,7 +189,7 @@ function CourseModal({
     setCourseHoles((prev) => {
       if (n > prev.length) {
         return [...prev, ...Array.from({ length: n - prev.length }, (_, i) => ({
-          number: prev.length + i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null, teeLat: null as number | null, teeLng: null as number | null, greenPoints: null as { lat: number; lng: number }[] | null,
+          number: prev.length + i + 1, par: 4, distance: 300, latitude: null as number | null, longitude: null as number | null, teeLat: null as number | null, teeLng: null as number | null, greenPoints: null as { lat: number; lng: number }[] | null, waypoints: null as { lat: number; lng: number }[] | null,
         }))];
       }
       return prev.slice(0, n);
@@ -167,6 +241,170 @@ function CourseModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseHoles.length]);
 
+  // Golf API import state
+  const [apiSearch, setApiSearch] = useState("");
+  const [apiResults, setApiResults] = useState<GolfApiClub[]>([]);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiImported, setApiImported] = useState(false);
+  const [courseTees, setCourseTees] = useState<{ name: string; color: string; lengths: number[]; crMen: number | null; sMen: number | null; crWomen: number | null; sWomen: number | null; golfApiTeeId: string }[]>(() => {
+    if (course?.courseTees && course.courseTees.length > 0) {
+      return course.courseTees.map((t) => ({
+        name: t.name,
+        color: t.color,
+        lengths: t.lengths,
+        crMen: t.crMen,
+        sMen: t.sMen,
+        crWomen: t.crWomen,
+        sWomen: t.sWomen,
+        golfApiTeeId: t.golfApiTeeId || "",
+      }));
+    }
+    return [];
+  });
+  const apiDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const searchGolfApi = async (query: string) => {
+    if (!query.trim() || query.trim().length < 3) { setApiResults([]); return; }
+    setApiLoading(true);
+    try {
+      const res = await golfApiFetch(`/clubs?name=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      setApiResults(data.clubs || []);
+    } catch { setError("Erreur de recherche Golf API"); }
+    finally { setApiLoading(false); }
+  };
+
+  const handleApiSearchChange = (value: string) => {
+    setApiSearch(value);
+    if (apiDebounceRef.current) clearTimeout(apiDebounceRef.current);
+    apiDebounceRef.current = setTimeout(() => searchGolfApi(value), 400);
+  };
+
+  const importFromGolfApi = async (_clubId: string, courseId: string) => {
+    setApiLoading(true);
+    setError("");
+    try {
+      // Fetch course details and coordinates in parallel
+      const [courseRes, coordsRes] = await Promise.all([
+        golfApiFetch(`/courses/${courseId}?measureUnit=m`),
+        golfApiFetch(`/coordinates/${courseId}`),
+      ]);
+      const courseData: GolfApiCourse = await courseRes.json();
+      const coordsData = await coordsRes.json();
+      const coords: GolfApiCoord[] = coordsData.coordinates || [];
+
+      const numHoles = parseInt(courseData.numHoles) || 18;
+
+      // Fill form
+      setForm((f) => ({
+        ...f,
+        name: courseData.clubName + (courseData.courseName && courseData.courseName !== courseData.clubName ? ` - ${courseData.courseName}` : ""),
+        city: courseData.city || f.city,
+        country: courseData.country || f.country,
+        latitude: parseFloat(courseData.latitude) || f.latitude,
+        longitude: parseFloat(courseData.longitude) || f.longitude,
+        holes: numHoles,
+        par: courseData.parsMen?.reduce((a, b) => a + b, 0) || f.par,
+      }));
+
+      // Build holes with pars, indexes, and GPS coordinates
+      const newHoles = Array.from({ length: numHoles }, (_, i) => {
+        const holeNum = i + 1;
+        // Find GPS: poi=1 = Green (middle), poi=11 = Front tee, poi=12 = Back tee
+        const greenCoord = coords.find((c) => c.hole === holeNum && c.poi === 1 && c.location === 2);
+        const greenFront = coords.find((c) => c.hole === holeNum && c.poi === 1 && c.location === 1);
+        const greenAny = greenCoord || greenFront || coords.find((c) => c.hole === holeNum && c.poi === 1);
+        const backTee = coords.find((c) => c.hole === holeNum && c.poi === 12);
+        const frontTee = coords.find((c) => c.hole === holeNum && c.poi === 11);
+        const teeCoord = backTee || frontTee;
+
+        // Use first tee's distance as default
+        const firstTee = courseData.tees?.[0];
+        const dist = firstTee ? (firstTee as any)[`length${holeNum}`] || 300 : 300;
+
+        // Collect fairway waypoints: dogleg (poi=9), distance markers (poi=6,7,8)
+        const waypointCoords = coords
+          .filter((c) => c.hole === holeNum && [6, 7, 8, 9].includes(c.poi))
+          .map((c) => ({ lat: parseFloat(c.latitude), lng: parseFloat(c.longitude), poi: c.poi }));
+        // Sort by distance from tee (closest first)
+        const teePt = teeCoord ? { lat: parseFloat(teeCoord.latitude), lng: parseFloat(teeCoord.longitude) } : null;
+        if (teePt && waypointCoords.length > 1) {
+          waypointCoords.sort((a, b) => {
+            const da = (a.lat - teePt.lat) ** 2 + (a.lng - teePt.lng) ** 2;
+            const db = (b.lat - teePt.lat) ** 2 + (b.lng - teePt.lng) ** 2;
+            return da - db;
+          });
+        }
+        const waypoints = waypointCoords.length > 0
+          ? waypointCoords.map((w) => ({ lat: w.lat, lng: w.lng }))
+          : null;
+
+        return {
+          number: holeNum,
+          par: courseData.parsMen?.[i] ?? 4,
+          distance: dist,
+          latitude: greenAny ? parseFloat(greenAny.latitude) : null,
+          longitude: greenAny ? parseFloat(greenAny.longitude) : null,
+          teeLat: teeCoord ? parseFloat(teeCoord.latitude) : null,
+          teeLng: teeCoord ? parseFloat(teeCoord.longitude) : null,
+          greenPoints: null as { lat: number; lng: number }[] | null,
+          waypoints,
+          indexMen: courseData.indexesMen?.[i] ?? null,
+          indexWomen: courseData.indexesWomen?.[i] ?? null,
+          parWomen: courseData.parsWomen?.[i] ?? null,
+        };
+      });
+      setCourseHoles(newHoles);
+
+      // Build tees
+      if (courseData.tees && courseData.tees.length > 0) {
+        const tees = courseData.tees.map((t) => {
+          const lengths = Array.from({ length: numHoles }, (_, i) => Number((t as any)[`length${i + 1}`]) || 0);
+          return {
+            name: t.teeName,
+            color: t.teeColor || "#999999",
+            lengths,
+            crMen: t.courseRatingMen && t.courseRatingMen !== "" ? Number(t.courseRatingMen) : null,
+            sMen: t.slopeMen && t.slopeMen !== "" ? Number(t.slopeMen) : null,
+            crWomen: t.courseRatingWomen && t.courseRatingWomen !== "" ? Number(t.courseRatingWomen) : null,
+            sWomen: t.slopeWomen && t.slopeWomen !== "" ? Number(t.slopeWomen) : null,
+            golfApiTeeId: t.teeID,
+          };
+        });
+        setCourseTees(tees);
+      }
+
+      // Auto-detect zones via OSM (same as manual address selection)
+      const lat = parseFloat(courseData.latitude);
+      const lng = parseFloat(courseData.longitude);
+      if (lat && lng) {
+        fetch(`${API}/courses/detect-zones-by-coords`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ latitude: lat, longitude: lng, radius: 600 }),
+        })
+          .then((res) => res.ok ? res.json() : null)
+          .then((data) => {
+            if (data?.zones) setCourseZones(data.zones.map((z: any) => ({ type: z.type, points: z.points })));
+          })
+          .catch(() => {});
+      }
+
+      // Fill address field with club address
+      const fullAddress = [courseData.address, courseData.postalCode, courseData.city, courseData.country].filter(Boolean).join(", ");
+      setAddress(fullAddress);
+      setGeoSelected(true);
+      setApiImported(true);
+      setApiResults([]);
+      setApiSearch("");
+    } catch (e) {
+      console.error("Golf API import error:", e);
+      setError("Erreur lors de l'import depuis Golf API");
+    } finally {
+      setApiLoading(false);
+    }
+  };
+
   const [address, setAddress] = useState("");
   const [geoResults, setGeoResults] = useState<GeoResult[]>([]);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -208,18 +446,6 @@ function CourseModal({
         .then((res) => res.ok ? res.json() : null)
         .then((data) => {
           if (data?.zones) setCourseZones(data.zones.map((z: any) => ({ type: z.type, points: z.points })));
-          if (data?.holes && data.holes.length > 0) {
-            setCourseHoles((prev) => {
-              const updated = [...prev];
-              for (const dh of data.holes) {
-                const idx = dh.number - 1;
-                if (idx >= 0 && idx < updated.length) {
-                  updated[idx] = { ...updated[idx], latitude: dh.latitude, longitude: dh.longitude, teeLat: dh.teeLat || updated[idx].teeLat, teeLng: dh.teeLng || updated[idx].teeLng, par: dh.par || updated[idx].par, greenPoints: dh.greenPoints || updated[idx].greenPoints };
-                }
-              }
-              return recalcDistances(updated);
-            });
-          }
         })
         .catch(() => {});
     }
@@ -256,12 +482,17 @@ function CourseModal({
         ...form, latitude: Number(form.latitude), longitude: Number(form.longitude),
         holes: Number(form.holes), par: totalPar, rating: form.rating ? Number(form.rating) : null,
         imageUrl: form.imageUrl || null,
-        courseHoles: courseHoles.map((h) => ({
+        courseHoles: courseHoles.map((h: any) => ({
           number: h.number, par: h.par, distance: h.distance,
           ...(h.latitude != null && h.longitude != null ? { latitude: h.latitude, longitude: h.longitude } : {}),
           ...(h.teeLat != null && h.teeLng != null ? { teeLat: h.teeLat, teeLng: h.teeLng } : {}),
           ...(h.greenPoints ? { greenPoints: h.greenPoints } : {}),
+          ...(h.waypoints ? { waypoints: h.waypoints } : {}),
+          ...(h.indexMen != null ? { indexMen: h.indexMen } : {}),
+          ...(h.indexWomen != null ? { indexWomen: h.indexWomen } : {}),
+          ...(h.parWomen != null ? { parWomen: h.parWomen } : {}),
         })),
+        ...(courseTees.length > 0 ? { courseTees } : {}),
       };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error();
@@ -305,6 +536,57 @@ function CourseModal({
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <p className="text-red-400 text-[13px] bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+
+          {/* Golf API Import */}
+          {!isEdit && !apiImported && (
+            <div className="bg-accent/[0.04] border border-accent/10 rounded-xl p-4">
+              <label className="block text-[12px] text-accent font-semibold mb-2">Importer depuis Golf API</label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-accent/50" />
+                <input
+                  value={apiSearch}
+                  onChange={(e) => handleApiSearchChange(e.target.value)}
+                  className="w-full bg-white/[0.03] border border-accent/20 rounded-lg pl-9 pr-8 py-2 text-[13px] text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent/40"
+                  placeholder="Rechercher un golf (ex: Cely, Pebble Beach...)"
+                />
+                {apiLoading && <Loader2 className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-accent animate-spin" />}
+              </div>
+              {apiResults.length > 0 && (
+                <div className="mt-2 bg-surface border border-white/[0.06] rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                  {apiResults.map((club) => (
+                    <div key={club.clubID} className="border-b border-white/[0.03] last:border-0">
+                      <div className="px-3 py-2">
+                        <p className="text-[13px] text-white font-medium">{club.clubName}</p>
+                        <p className="text-[11px] text-gray-500">{club.city}, {club.country}</p>
+                      </div>
+                      {club.courses.map((c) => (
+                        <button
+                          key={c.courseID}
+                          type="button"
+                          onClick={() => importFromGolfApi(club.clubID, c.courseID)}
+                          disabled={apiLoading}
+                          className="w-full text-left px-3 py-2 pl-6 text-[12px] text-gray-300 hover:bg-accent/[0.06] transition-colors flex items-center justify-between gap-2"
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <MapPin className="w-3 h-3 text-accent/60" />
+                            {c.courseName} — {c.numHoles} trous
+                          </span>
+                          {c.hasGPS === 1 && <span className="text-[10px] text-accent/60 bg-accent/10 px-1.5 py-0.5 rounded">GPS</span>}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[10px] text-gray-600 mt-2">Ou remplissez manuellement ci-dessous</p>
+            </div>
+          )}
+          {apiImported && (
+            <div className="flex items-center gap-2 bg-accent/[0.06] border border-accent/20 rounded-lg px-3 py-2">
+              <CheckCircle2 className="w-4 h-4 text-accent" />
+              <span className="text-[12px] text-accent font-medium">Importe depuis Golf API — {courseTees.length} departs, {courseHoles.filter((h) => h.latitude != null).length} trous GPS</span>
+            </div>
+          )}
 
           {/* Image upload */}
           <div>
@@ -452,7 +734,7 @@ function CourseModal({
                 {form.latitude !== 0 && form.longitude !== 0 ? (
                   <HoleMap
                     center={[form.latitude, form.longitude]}
-                    holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude, teeLat: h.teeLat, teeLng: h.teeLng, greenPoints: h.greenPoints }))}
+                    holes={courseHoles.map((h) => ({ number: h.number, latitude: h.latitude, longitude: h.longitude, teeLat: h.teeLat, teeLng: h.teeLng, greenPoints: h.greenPoints, waypoints: h.waypoints }))}
                     activeHole={activeHoleIndex}
                     onHolePositioned={handleHolePositioned}
                     onTeePositioned={handleTeePositioned}
@@ -464,6 +746,7 @@ function CourseModal({
                     zones={courseZones}
                     onZonesChange={setCourseZones}
                     courseId={isEdit ? course.id : undefined}
+                    courseTees={courseTees}
                     onHolesDetected={(detectedHoles) => {
                       setCourseHoles((prev) => {
                         const updated = [...prev];
@@ -493,6 +776,25 @@ function CourseModal({
               </div>
             </div>
           </div>
+
+          {/* Tees / Departs */}
+          {courseTees.length > 0 && (
+            <div>
+              <label className="block text-[12px] text-gray-500 font-medium mb-2">Departs importes ({courseTees.length})</label>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {courseTees.map((t, i) => (
+                  <div key={i} className="flex flex-col items-center min-w-[80px] px-3 py-2 rounded-xl border border-white/[0.04] bg-white/[0.02]">
+                    <div className="w-4 h-4 rounded-full mb-1.5 border border-black/20" style={{ backgroundColor: t.color }} />
+                    <span className="text-[12px] font-semibold text-white">{t.name}</span>
+                    <span className="text-[10px] text-gray-500 mt-0.5">
+                      {t.crMen != null ? `CR ${t.crMen}` : "—"} / {t.sMen != null ? `S ${t.sMen}` : "—"}
+                    </span>
+                    <span className="text-[10px] text-gray-600 mt-0.5">{t.lengths.reduce((a, b) => a + b, 0)}m</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-white/[0.06] text-[13px] font-medium text-gray-400 hover:bg-white/[0.03] transition-colors">Annuler</button>

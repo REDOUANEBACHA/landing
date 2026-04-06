@@ -233,6 +233,26 @@ function CourseMap({
         }
       }
 
+      if (tee && isActive && green) {
+        // Show colored tee zones along the tee→green line
+        const maxLen = COURSE.tees[0].lengths[h - 1]; // longest tee (Noirs)
+        for (const t of COURSE.tees) {
+          const ratio = (maxLen - t.lengths[h - 1]) / maxLen;
+          const lat = tee.lat + (green.lat - tee.lat) * ratio;
+          const lng = tee.lng + (green.lng - tee.lng) * ratio;
+          const isSel = COURSE.tees[selectedTeeIdx].id === t.id;
+          const sz = isSel ? 18 : 12;
+          L.marker([lat, lng], {
+            icon: L.divIcon({
+              className: "",
+              iconSize: [sz, sz],
+              iconAnchor: [sz / 2, sz / 2],
+              html: `<div style="width:${sz}px;height:${sz}px;background:${t.color};border:2px solid ${isSel ? '#fff' : 'rgba(255,255,255,0.4)'};border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>`,
+            }),
+          }).addTo(layers);
+        }
+      }
+
       if (tee) {
         const m = L.marker([tee.lat, tee.lng], { icon: teeIcon(L, h, isActive) }).addTo(layers);
         m.on("click", () => onHoleClickRef.current(selectedHoleRef.current === h ? null : h));

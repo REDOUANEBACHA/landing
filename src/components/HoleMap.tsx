@@ -19,17 +19,25 @@ interface HolePosition {
   teeLat?: number | null;
   teeLng?: number | null;
   greenPoints?: { lat: number; lng: number }[] | null;
+  waypoints?: { lat: number; lng: number }[] | null;
 }
 
 interface ZonePoint { lat: number; lng: number; }
 interface ZoneData { type: string; points: ZonePoint[]; id?: string; }
 
 const ZONE_TYPES = [
+  { key: "fairway", label: "Fairway", color: "#34D399" },
   { key: "ob", label: "OB", color: "#FF5050" },
   { key: "water", label: "Eau", color: "#4488FF" },
   { key: "bunker", label: "Bunker", color: "#DCC864" },
   { key: "trees", label: "Arbres", color: "#228B22" },
 ];
+
+interface CourseTeeData {
+  name: string;
+  color: string;
+  lengths: number[];
+}
 
 interface HoleMapProps {
   center: [number, number];
@@ -46,6 +54,7 @@ interface HoleMapProps {
   holeTool?: "green" | "tee";
   onHoleToolChange?: (tool: "green" | "tee") => void;
   onHolesDetected?: (holes: { number: number; latitude: number; longitude: number; par: number | null; greenPoints: ZonePoint[] | null }[]) => void;
+  courseTees?: CourseTeeData[];
 }
 
 // Color per hole for markers
@@ -83,7 +92,7 @@ function getHoleIcon(number: number, isActive: boolean) {
 
 const API = process.env.NEXT_PUBLIC_API_URL!;
 
-export default function HoleMap({ center, holes, activeHole, onHolePositioned, onTeePositioned, onActiveHoleChange, onSave, saving, zones = [], onZonesChange, courseId, holeTool: holeToolProp, onHoleToolChange, onHolesDetected }: HoleMapProps) {
+export default function HoleMap({ center, holes, activeHole, onHolePositioned, onTeePositioned, onActiveHoleChange, onSave, saving, zones = [], onZonesChange, courseId, holeTool: holeToolProp, onHoleToolChange, onHolesDetected, courseTees = [] }: HoleMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
@@ -96,6 +105,8 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
   const setHoleTool = onHoleToolChange || (() => {});
   const [zoneTool, setZoneTool] = useState<"draw" | "pan">("pan");
   const [activeZoneType, setActiveZoneType] = useState("ob");
+  const [showTees, setShowTees] = useState(false);
+  const teesLayerRef = useRef<L.LayerGroup | null>(null);
   const [zoneDraft, setZoneDraft] = useState<ZonePoint[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const drawingRef = useRef(false);
@@ -138,6 +149,7 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
 
       boundaryLayerRef.current = L.layerGroup().addTo(map);
       zonesLayerRef.current = L.layerGroup().addTo(map);
+      teesLayerRef.current = L.layerGroup().addTo(map);
       draftLayerRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
     }, 50);
@@ -351,6 +363,86 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
     });
   }, [zones]);
 
+  // Interpolate a point along a polyline path at a given ratio (0=start, 1=end)
+  const interpolateAlongPath = (path: { lat: number; lng: number }[], ratio: number) => {
+    if (path.length < 2 || ratio <= 0) return path[0];
+    if (ratio >= 1) return path[path.length - 1];
+    // Compute total length of path segments
+    const segLens: number[] = [];
+    let totalLen = 0;
+    for (let i = 1; i < path.length; i++) {
+      const dx = path[i].lat - path[i - 1].lat;
+      const dy = path[i].lng - path[i - 1].lng;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      segLens.push(d);
+      totalLen += d;
+    }
+    const targetDist = ratio * totalLen;
+    let accumulated = 0;
+    for (let i = 0; i < segLens.length; i++) {
+      if (accumulated + segLens[i] >= targetDist) {
+        const segRatio = (targetDist - accumulated) / segLens[i];
+        return {
+          lat: path[i].lat + (path[i + 1].lat - path[i].lat) * segRatio,
+          lng: path[i].lng + (path[i + 1].lng - path[i].lng) * segRatio,
+        };
+      }
+      accumulated += segLens[i];
+    }
+    return path[path.length - 1];
+  };
+
+  // Draw interpolated tee positions
+  useEffect(() => {
+    if (!teesLayerRef.current) return;
+    teesLayerRef.current.clearLayers();
+    if (!showTees || courseTees.length === 0) return;
+
+    const maxLengths = courseTees[0].lengths; // longest tee (first = most distant)
+
+    holes.forEach((hole) => {
+      if (hole.teeLat == null || hole.teeLng == null || hole.latitude == null || hole.longitude == null) return;
+      const hIdx = hole.number - 1;
+
+      // Build path: tee → waypoints → green
+      const path: { lat: number; lng: number }[] = [
+        { lat: hole.teeLat!, lng: hole.teeLng! },
+        ...(hole.waypoints || []),
+        { lat: hole.latitude!, lng: hole.longitude! },
+      ];
+
+      courseTees.forEach((tee) => {
+        const maxLen = maxLengths[hIdx];
+        if (!maxLen) return;
+        const ratio = (maxLen - tee.lengths[hIdx]) / maxLen;
+        const pt = interpolateAlongPath(path, ratio);
+        const isActive = hole.number === activeHole + 1;
+        const sz = isActive ? 16 : 10;
+
+        L.marker([pt.lat, pt.lng], {
+          icon: L.divIcon({
+            className: "",
+            iconSize: [sz, sz],
+            iconAnchor: [sz / 2, sz / 2],
+            html: `<div style="width:${sz}px;height:${sz}px;background:${tee.color};border:1.5px solid rgba(255,255,255,0.5);border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>`,
+          }),
+          interactive: false,
+        }).addTo(teesLayerRef.current!);
+
+        if (isActive) {
+          L.marker([pt.lat, pt.lng], {
+            icon: L.divIcon({
+              className: "",
+              iconAnchor: [-4, 6],
+              html: `<div style="background:rgba(0,0,0,0.7);color:#fff;padding:1px 4px;border-radius:4px;font-size:9px;font-weight:700;white-space:nowrap;border:1px solid ${tee.color}40">${tee.lengths[hIdx]}m</div>`,
+            }),
+            interactive: false,
+          }).addTo(teesLayerRef.current!);
+        }
+      });
+    });
+  }, [showTees, courseTees, holes, activeHole]);
+
   // Draw zone draft
   useEffect(() => {
     if (!draftLayerRef.current) return;
@@ -411,9 +503,6 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
       }
       if (data.zones && data.zones.length > 0) {
         onZonesChange([...zones, ...data.zones.map((z: any) => ({ type: z.type, points: z.points }))]);
-      }
-      if (data.holes && data.holes.length > 0 && onHolesDetected) {
-        onHolesDetected(data.holes);
       }
     } catch (e) {
       console.error("Auto-detect error:", e);
@@ -495,6 +584,19 @@ export default function HoleMap({ center, holes, activeHole, onHolePositioned, o
                 Zones
               </button>
             </div>
+
+            {/* Tee positions toggle */}
+            {courseTees.length > 0 && (
+              <button type="button" onClick={() => setShowTees(!showTees)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all backdrop-blur-sm border ${showTees ? "bg-accent/20 border-accent/30 text-accent" : "bg-dark/80 border-white/10 text-gray-400 hover:text-white"}`}>
+                <div className="flex -space-x-1">
+                  {courseTees.slice(0, 4).map((t, i) => (
+                    <div key={i} className="w-2.5 h-2.5 rounded-full border border-black/30" style={{ backgroundColor: t.color }} />
+                  ))}
+                </div>
+                Departs
+              </button>
+            )}
 
             {/* Holes controls */}
             {mode === "holes" && (
